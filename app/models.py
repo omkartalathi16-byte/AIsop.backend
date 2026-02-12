@@ -5,16 +5,18 @@ from typing import List, Optional
 class SOPCreate(BaseModel):
     title: str
     content: str
-    link: Optional[str] = None
-    metadata: Optional[dict] = None
+    sop_link: Optional[str] = None
+    threat_type: Optional[str] = None
+    category: Optional[str] = None
 
 
 class SOPSearchResult(BaseModel):
     title: str
     content: str
     score: float
-    link: Optional[str] = None
-    metadata: Optional[dict] = None
+    sop_link: Optional[str] = None
+    threat_type: Optional[str] = None
+    category: Optional[str] = None
 
 
 class QueryRequest(BaseModel):
@@ -22,15 +24,27 @@ class QueryRequest(BaseModel):
     top_k: int = 5
 
 
-class ChatRequest(BaseModel):
-    message: str
-    session_id: Optional[str] = None
+class DeriveRequest(BaseModel):
+    query: str
+    top_k: int = 5
+    threat_type: Optional[str] = None
+    category: Optional[str] = None
 
 
-class ChatResponse(BaseModel):
-    answer: str
-    sop_title: Optional[str] = None
-    summary: Optional[str] = None
-    steps: Optional[List[str]] = None
-    link: Optional[str] = None
-    session_id: str
+class MatchedChunk(BaseModel):
+    content: str
+    similarity_score: float
+
+
+class DeriveResult(BaseModel):
+    title: str
+    sop_link: Optional[str] = None
+    confidence_score: float
+    matched_chunks: List[MatchedChunk]
+    metadata: dict
+
+
+class DeriveResponse(BaseModel):
+    query: str
+    results: List[DeriveResult]
+    total_results: int

@@ -33,10 +33,12 @@ class MilvusService:
                 FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
                 FieldSchema(name="title", dtype=DataType.VARCHAR, max_length=500),
                 FieldSchema(name="content", dtype=DataType.VARCHAR, max_length=65535),
-                FieldSchema(name="link", dtype=DataType.VARCHAR, max_length=2048),
+                FieldSchema(name="sop_link", dtype=DataType.VARCHAR, max_length=2048),
+                FieldSchema(name="threat_type", dtype=DataType.VARCHAR, max_length=200),
+                FieldSchema(name="category", dtype=DataType.VARCHAR, max_length=200),
                 FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=self.dim)
             ]
-            schema = CollectionSchema(fields, description="SOP storage with link")
+            schema = CollectionSchema(fields, description="SOP storage with metadata")
             self.collection = Collection(self.collection_name, schema)
 
             index_params = {
@@ -47,11 +49,15 @@ class MilvusService:
             self.collection.create_index(field_name="embedding", index_params=index_params)
             logging.info(f"Created new collection and index: {self.collection_name}")
 
-    def insert_sop(self, title: str, chunks: list[str], embeddings: list[list[float]], link: str = ""):
+    def insert_sop(self, title: str, chunks: list[str], embeddings: list[list[float]],
+                   sop_link: str = "", threat_type: str = "", category: str = ""):
+        n = len(chunks)
         data = [
-            [title] * len(chunks),
+            [title] * n,
             chunks,
-            [link] * len(chunks),
+            [sop_link] * n,
+            [threat_type] * n,
+            [category] * n,
             embeddings
         ]
         self.collection.insert(data)
@@ -65,7 +71,7 @@ class MilvusService:
             anns_field="embedding",
             param=search_params,
             limit=top_k,
-            output_fields=["title", "content", "link"]
+            output_fields=["title", "content", "sop_link", "threat_type", "category"]
         )
 
         formatted_results = []
@@ -74,7 +80,9 @@ class MilvusService:
                 formatted_results.append({
                     "title": hit.entity.get("title"),
                     "content": hit.entity.get("content"),
-                    "link": hit.entity.get("link"),
+                    "sop_link": hit.entity.get("sop_link"),
+                    "threat_type": hit.entity.get("threat_type"),
+                    "category": hit.entity.get("category"),
                     "score": hit.score
                 })
         return formatted_results

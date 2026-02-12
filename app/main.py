@@ -1,13 +1,10 @@
-import uuid
 import logging
 from fastapi import FastAPI, HTTPException
-from app.models import SOPCreate, SOPSearchResult, QueryRequest, ChatRequest, ChatResponse
+from app.models import SOPCreate, SOPSearchResult, QueryRequest, DeriveRequest, DeriveResponse
 from app.services.embedding_service import EmbeddingService
 from app.services.milvus_service import MilvusService
 from app.services.chunk_service import ChunkService
-from app.engine.nlp_engine import NLPEngine
-from app.engine.nn_engine import NNEngine
-from app.engine.graph import build_chat_graph
+from app.services.derive_engine import DeriveEngine
 
 logging.basicConfig(level=logging.INFO)
 
@@ -17,13 +14,7 @@ app = FastAPI(title="SOP Fetching Engine")
 embedding_service = EmbeddingService()
 milvus_service = MilvusService()
 chunk_service = ChunkService()
-
-# ─── Initialize Engines ───────────────────────────────────────────
-nlp_engine = NLPEngine(embedding_service, milvus_service)
-nn_engine = NNEngine()
-
-# ─── Build LangGraph ──────────────────────────────────────────────
-chat_graph = build_chat_graph(nlp_engine, nn_engine)
+derive_engine = DeriveEngine(embedding_service, milvus_service)
 
 
 # ─── SOP Ingestion ────────────────────────────────────────────────
@@ -32,15 +23,21 @@ async def add_sop(sop: SOPCreate):
     try:
         chunks = chunk_service.chunk_text(sop.content)
         embeddings = embedding_service.generate_embeddings(chunks)
-        link = sop.link or ""
-        milvus_service.insert_sop(sop.title, chunks, embeddings, link)
+        milvus_service.insert_sop(
+            title=sop.title,
+            chunks=chunks,
+            embeddings=embeddings,
+            sop_link=sop.sop_link or "",
+            threat_type=sop.threat_type or "",
+            category=sop.category or ""
+        )
         return {"message": "SOP added successfully", "chunks_count": len(chunks)}
     except Exception as e:
         logging.error(f"Error adding SOP: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ─── SOP Search (direct) ──────────────────────────────────────────
+# ─── SOP Search (direct similarity) ───────────────────────────────
 @app.post("/search/", response_model=list[SOPSearchResult])
 async def search_sops(request: QueryRequest):
     try:
@@ -52,39 +49,19 @@ async def search_sops(request: QueryRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ─── Chat Assistant ────────────────────────────────────────────────
-@app.post("/chat/", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+# ─── SOP Derive (hybrid retrieval) ────────────────────────────────
+@app.post("/derive/", response_model=DeriveResponse)
+async def derive_sop(request: DeriveRequest):
     try:
-        session_id = request.session_id or str(uuid.uuid4())
-
-        initial_state = {
-            "message": request.message,
-            "session_id": session_id,
-            "is_followup": False,
-            "intent": None,
-            "sop_results": None,
-            "sop_context": None,
-            "sop_title": None,
-            "sop_link": None,
-            "summary": None,
-            "steps": None,
-            "answer": None,
-            "chat_history": None,
-        }
-
-        result = chat_graph.invoke(initial_state)
-
-        return ChatResponse(
-            answer=result.get("answer", ""),
-            sop_title=result.get("sop_title"),
-            summary=result.get("summary"),
-            steps=result.get("steps"),
-            link=result.get("sop_link"),
-            session_id=session_id
+        result = derive_engine.derive(
+            query=request.query,
+            top_k=request.top_k,
+            threat_type=request.threat_type,
+            category=request.category
         )
+        return result
     except Exception as e:
-        logging.error(f"Chat error: {e}")
+        logging.error(f"Error deriving SOP: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

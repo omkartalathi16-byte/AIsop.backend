@@ -6,9 +6,3 @@ pydantic==2.6.1
 python-multipart==0.0.9
 nltk==3.8.1
 requests==2.31.0
-langchain>=0.3.0
-langgraph>=0.2.0
-langchain-community>=0.3.0
-langchain-huggingface>=0.1.0
-transformers>=4.36.0
-accelerate>=0.25.0
