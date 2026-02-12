@@ -6,3 +6,4 @@ pydantic==2.6.1
 python-multipart==0.0.9
 nltk==3.8.1
 requests==2.31.0
+cachetools==5.3.2

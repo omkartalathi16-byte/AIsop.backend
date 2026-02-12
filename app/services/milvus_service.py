@@ -78,6 +78,7 @@ class MilvusService:
         for hits in results:
             for hit in hits:
                 formatted_results.append({
+                    "id": hit.id,
                     "title": hit.entity.get("title"),
                     "content": hit.entity.get("content"),
                     "sop_link": hit.entity.get("sop_link"),
