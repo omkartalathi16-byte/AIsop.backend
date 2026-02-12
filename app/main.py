@@ -4,7 +4,7 @@ from app.models import SOPCreate, SOPSearchResult, QueryRequest, DeriveRequest, 
 from app.services.embedding_service import EmbeddingService
 from app.services.milvus_service import MilvusService
 from app.services.chunk_service import ChunkService
-from app.services.derive_engine import DeriveEngine
+from app.engine.derive_engine import DeriveEngine
 
 logging.basicConfig(level=logging.INFO)
 
