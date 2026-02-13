@@ -55,3 +55,16 @@ class DeriveResponse(BaseModel):
     total_results: int
     performance: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+
+class ChatRequest(BaseModel):
+    query: str
+    conversation_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+class ChatResponse(BaseModel):
+    response: str
+    conversation_id: str
+    active_sop: Optional[str] = None
+    intent: Optional[str] = None
+    has_error: bool = False
+    sop_count: int = 0

@@ -1,20 +1,32 @@
 import logging
 from fastapi import FastAPI, HTTPException
-from app.models import SOPCreate, SOPSearchResult, QueryRequest, DeriveRequest, DeriveResponse
+from app.models import SOPCreate, SOPSearchResult, QueryRequest, DeriveRequest, DeriveResponse, ChatRequest, ChatResponse
 from app.services.embedding_service import EmbeddingService
 from app.services.milvus_service import MilvusService
 from app.services.chunk_service import ChunkService
 from app.engine.derive_engine import DeriveEngine
+from app.engine.sop_assistant_enterprise import create_enterprise_assistant
 
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="SOP Fetching Engine")
+
+# Add CORS Middleware
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 # ─── Initialize Services ──────────────────────────────────────────
 embedding_service = EmbeddingService()
 milvus_service = MilvusService()
 chunk_service = ChunkService()
 derive_engine = DeriveEngine(embedding_service, milvus_service)
+sop_assistant = create_enterprise_assistant(derive_engine)
 
 
 # ─── SOP Ingestion ────────────────────────────────────────────────
@@ -62,6 +74,22 @@ async def derive_sop(request: DeriveRequest):
         return result
     except Exception as e:
         logging.error(f"Error deriving SOP: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+# ─── Chat Assistant ────────────────────────────────────────────────
+@app.post("/chat/", response_model=ChatResponse)
+async def chat_interaction(request: ChatRequest):
+    try:
+        response = sop_assistant.chat(
+            query=request.query,
+            conversation_id=request.conversation_id,
+            user_id=request.user_id
+        )
+        return response
+    except Exception as e:
+        logging.error(f"Error in chat interaction: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
