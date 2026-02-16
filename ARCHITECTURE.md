@@ -102,6 +102,14 @@ Milvus --> MinIO
 *   **Status**: **[IMPLEMENTED]**
 *   **How**: All components share a single instance of `all-MiniLM-L6-v2`, reducing RAM usage by ~500MB.
 
+## Production Roadmap: When do "Extras" become necessary?
+
+While the current system is lean and functional, here is why you might eventually need the "extras" we discussed:
+
+1.  **Redis (Session Caching)**: Currently, if the server restarts, the AI might "forget" the immediate context of a conversation. Redis makes the chat **persistent** and allows you to scale to hundreds of concurrent users.
+2.  **PostgreSQL (Structured Analytics)**: Milvus is great for *searching* text, but Postgres is better for *reporting*. Use it if your manager wants a dashboard showing: "How many questions did we answer today?" or "Which SOPs are being used most?"
+3.  **Monitoring (OpenTelemetry/Prometheus)**: Crucial for production to get an alert on your phone *before* the system crashes due to memory limits.
+
 ---
 > [!IMPORTANT]
 > **Minimalist Design**: We have deliberately excluded PostgreSQL and Redis. For a system processing SOPs, the Vector DB's ability to store metadata is sufficient for analytics and retrieval, keeping the footprint low.
