@@ -26,7 +26,12 @@ embedding_service = EmbeddingService()
 milvus_service = MilvusService()
 chunk_service = ChunkService()
 derive_engine = DeriveEngine(embedding_service, milvus_service)
-sop_assistant = create_enterprise_assistant(derive_engine)
+
+# Share the transformer model instance to save RAM
+sop_assistant = create_enterprise_assistant(
+    derive_engine, 
+    transformer_model=embedding_service.model
+)
 
 
 # ─── SOP Ingestion ────────────────────────────────────────────────

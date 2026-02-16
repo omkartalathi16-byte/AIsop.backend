@@ -7,7 +7,10 @@ python-multipart==0.0.9
 nltk==3.8.1
 requests==2.31.0
 cachetools==5.3.2
-spacy==3.7.2
-langgraph>=0.0.10
+spacy>=3.8.11
+langgraph>=0.1.0
 langchain-core>=0.1.10
-numpy<2.0.0
+numpy>=1.26.0
+python-docx>=1.1.0
+PyPDF2>=3.0.1
+pywin32>=306

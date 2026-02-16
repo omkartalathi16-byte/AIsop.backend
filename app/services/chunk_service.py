@@ -9,8 +9,10 @@ class ChunkService:
         self.sentences_per_chunk = sentences_per_chunk
         try:
             nltk.data.find('tokenizers/punkt')
+            nltk.data.find('tokenizers/punkt_tab')
         except LookupError:
             nltk.download('punkt')
+            nltk.download('punkt_tab')
 
     def chunk_text(self, text: str) -> list[str]:
         sentences = nltk.sent_tokenize(text)

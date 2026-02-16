@@ -288,12 +288,16 @@ class SentenceEmbeddingRanker:
     Only model loaded - no FAISS, no vector stores.
     """
     
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", transformer_model: Any = None):
         """Initialize SentenceTransformer model."""
-        logger.info(f"Loading SentenceTransformer model: {model_name}")
-        self.model = SentenceTransformer(model_name)
-        self.model.eval()  # Inference mode
-        logger.info(f"Model loaded. Embedding dimension: {self.model.get_sentence_embedding_dimension()}")
+        if transformer_model:
+            self.model = transformer_model
+            logger.info("Using shared SentenceTransformer model instance")
+        else:
+            logger.info(f"Loading SentenceTransformer model: {model_name}")
+            self.model = SentenceTransformer(model_name)
+            self.model.eval()  # Inference mode
+            logger.info(f"Model loaded. Embedding dimension: {self.model.get_sentence_embedding_dimension()}")
     
     def encode(self, sentences: List[str]) -> np.ndarray:
         """Encode sentences to embeddings."""
@@ -340,9 +344,12 @@ class SOPExtractiveSummarizer:
     Combines SentenceTransformer ranking with NLP rules.
     """
     
-    def __init__(self, config: SOPAssistantConfig):
+    def __init__(self, config: SOPAssistantConfig, transformer_model: Any = None):
         self.config = config
-        self.ranker = SentenceEmbeddingRanker(config.sentence_transformer_model)
+        self.ranker = SentenceEmbeddingRanker(
+            config.sentence_transformer_model, 
+            transformer_model=transformer_model
+        )
         
         # NLP tools
         self.stopwords = set(stopwords.words(config.language))
@@ -717,7 +724,7 @@ class ResponseFormatter:
     """NLP-based response formatter - no templates."""
     
     @staticmethod
-    def format_summary_response(sop_title: str, summary: Dict[str, Any]) -> str:
+    def format_summary_response(sop_title: str, summary: Dict[str, Any], sop_link: str = None) -> str:
         """Format summary response with natural language."""
         lines = []
         
@@ -751,6 +758,11 @@ class ResponseFormatter:
             lines.append("**Topics:** " + ", ".join(summary['key_phrases'][:5]))
             lines.append("")
         
+        # Source Link
+        if sop_link:
+            lines.append(f"🔗 **Source:** [View Document]({sop_link})")
+            lines.append("")
+
         # Confidence
         if summary.get('confidence'):
             confidence_pct = int(summary['confidence'] * 100)
@@ -759,7 +771,7 @@ class ResponseFormatter:
         return "\n".join(lines)
     
     @staticmethod
-    def format_instruction_response(sop_title: str, instructions: List[Dict]) -> str:
+    def format_instruction_response(sop_title: str, instructions: List[Dict], sop_link: str = None) -> str:
         """Format instruction response with proper numbering."""
         if not instructions:
             return f"**{sop_title}**\n\nNo step-by-step instructions found in this SOP."
@@ -776,6 +788,10 @@ class ResponseFormatter:
             else:
                 lines.append(f"• {inst['text']}")
         
+        if sop_link:
+            lines.append("")
+            lines.append(f"🔗 **Source:** [View Document]({sop_link})")
+            
         return "\n".join(lines)
     
     @staticmethod
@@ -873,15 +889,19 @@ class EnterpriseSOPAssistant:
     """
     
     def __init__(self, 
-                 derive_engine,  # Your DeriveEngine instance
-                 config: Optional[SOPAssistantConfig] = None):
-        
+                 derive_engine: DeriveEngine, 
+                 config: SOPAssistantConfig = None,
+                 transformer_model: Any = None):
+        """Initialize Assistant with DeriveEngine and Configuration."""
         self.derive_engine = derive_engine
         self.config = config or SOPAssistantConfig()
         
         # Core components
-        self.intent_classifier = IntentClassifier()
-        self.summarizer = SOPExtractiveSummarizer(self.config)
+        self.classifier = IntentClassifier()
+        self.summarizer = SOPExtractiveSummarizer(
+            self.config, 
+            transformer_model=transformer_model
+        )
         self.formatter = ResponseFormatter()
         
         # LangGraph
@@ -941,7 +961,7 @@ class EnterpriseSOPAssistant:
         has_active_sop = state.get("active_sop") is not None
         awaiting_response = state.get("awaiting_counter_response", False)
         
-        intent = self.intent_classifier.classify(query, has_active_sop, awaiting_response)
+        intent = self.classifier.classify(query, has_active_sop, awaiting_response)
         state["intent"] = intent.value
         
         logger.info(f"Intent: {intent.value} | Query: {query[:50]}...")
@@ -949,21 +969,7 @@ class EnterpriseSOPAssistant:
     
     def _route_by_intent(self, state: ConversationState) -> str:
         """Route to appropriate node based on intent."""
-        intent = state.get("intent", "unknown")
-        
-        routing_map = {
-            "new_sop_query": "retrieve_sops",
-            "sop_summary": "generate_summary",
-            "instruction": "extract_instructions",
-            "clarification": "answer_question",
-            "comparison": "retrieve_sops",
-            "counter_question": "handle_counter_response",
-            "greeting": "format_response",
-            "thanks": "format_response",
-            "unknown": "retrieve_sops"
-        }
-        
-        return routing_map.get(intent, "retrieve_sops")
+        return state.get("intent", "unknown")
     
     def _retrieve_sops(self, state: ConversationState) -> ConversationState:
         """Retrieve SOPs using DeriveEngine."""
@@ -1113,8 +1119,9 @@ class EnterpriseSOPAssistant:
             
             elif intent in ["sop_summary", "new_sop_query"] and state.get("summary"):
                 sop_title = active_sop.get("title", "SOP") if active_sop else "SOP"
+                sop_link = active_sop.get("sop_link") if active_sop else None
                 state["response"] = self.formatter.format_summary_response(
-                    sop_title, state["summary"]
+                    sop_title, state["summary"], sop_link
                 )
                 
                 # Append counter-question if pending
@@ -1123,12 +1130,18 @@ class EnterpriseSOPAssistant:
             
             elif intent == "instruction" and state.get("instructions"):
                 sop_title = active_sop.get("title", "SOP") if active_sop else "SOP"
+                sop_link = active_sop.get("sop_link") if active_sop else None
                 state["response"] = self.formatter.format_instruction_response(
-                    sop_title, state["instructions"]
+                    sop_title, state["instructions"], sop_link
                 )
             
             elif intent in ["clarification", "question"] and state.get("answer"):
                 state["response"] = self.formatter.format_answer_response(state["answer"])
+                
+                # Append link to clarifications too if available
+                sop_link = active_sop.get("sop_link") if active_sop else None
+                if sop_link:
+                    state["response"] += f"\n\n🔗 **Source:** [View Document]({sop_link})"
             
             elif state.get("derive_results"):
                 results = state["derive_results"].get("results", [])
@@ -1259,22 +1272,12 @@ class EnterpriseSOPAssistant:
         return []
 
 
-##############################################################################
-# FACTORY FUNCTION
-##############################################################################
-
-def create_enterprise_assistant(derive_engine, **config_overrides):
-    """
-    Create Enterprise SOP Assistant instance.
-    
-    Args:
-        derive_engine: Your DeriveEngine instance
-        **config_overrides: Configuration overrides
-        
-    Returns:
-        Configured EnterpriseSOPAssistant
-    """
-    config = SOPAssistantConfig()
+def create_enterprise_assistant(derive_engine: DeriveEngine, 
+                               config: SOPAssistantConfig = None,
+                               transformer_model: Any = None,
+                               **config_overrides) -> EnterpriseSOPAssistant:
+    """Factory function for EnterpriseSOPAssistant."""
+    config = config or SOPAssistantConfig()
     
     # Apply overrides
     for key, value in config_overrides.items():
@@ -1283,7 +1286,11 @@ def create_enterprise_assistant(derive_engine, **config_overrides):
         else:
             logger.warning(f"Unknown config key: {key}")
     
-    return EnterpriseSOPAssistant(derive_engine, config)
+    return EnterpriseSOPAssistant(
+        derive_engine=derive_engine, 
+        config=config,
+        transformer_model=transformer_model
+    )
 
 
 if __name__ == "__main__":
