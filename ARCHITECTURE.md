@@ -1,84 +1,107 @@
 # Enterprise SOP Assistant Backend Architecture
 
-This document outlines the internal architecture of the SOP Assistant backend, showing how data flows from ingestion to real-time chat.
+This document defines the current and target architecture. It prioritizes the **Vector DB (Milvus)** as the single source for both knowledge and metadata, removing redundant databases like PostgreSQL for simplicity.
 
 ## System Architecture Diagram
 
 ```mermaid
 graph TD
-    subgraph Data_Source ["Data Layer (Local Folder)"]
-        Raw_Files["SOP Documents (.doc, .docx, .pdf, .py, .txt)"]
+
+%% ================= USER LAYER =================
+User["User / SOC Analyst"]
+
+%% ================= ORCHESTRATION =================
+subgraph Orchestration ["n8n - Central Nervous System"]
+    n8n["Workflow Engine (Target)"]
+end
+
+%% ================= DATA SOURCE =================
+subgraph Data_Source ["Data Layer"]
+    Files["SOP Documents (.pdf .docx .txt .py)"]
+end
+
+%% ================= INGESTION =================
+subgraph Ingestion ["Ingestion Pipeline (Implemented)"]
+    Reader["Universal Reader"]
+    Chunker["NLTK Chunking"]
+    Embed_I["Embedding Service (Shared)"]
+end
+
+%% ================= AI CORE =================
+subgraph AI_Core ["AI Engine (Implemented)"]
+    API["FastAPI (/chat /derive)"]
+
+    subgraph LangGraph ["LangGraph Workflow"]
+        Intent["Intent Classifier"]
+        Logic["Routing Logic"]
+        Summ["Summarizer"]
+        Extract["Instruction Extractor"]
+        Format["Response Formatter"]
     end
+end
 
-    subgraph Ingestion_Pipeline ["Universal Ingestion Pipeline (ingest_sops.py)"]
-        Reader["Universal Reader (pywin32, pypdf2, docx)"]
-        Chunker["Chunk Service (NLTK Tokenizer)"]
-        Embedder_I["Shared Embedding Service (all-MiniLM-L6-v2)"]
-        DB_Client["Milvus Service Client"]
-    end
+%% ================= RETRIEVAL =================
+subgraph Retrieval ["Knowledge Retrieval"]
+    Hybrid["Hybrid Search"]
+    Embed_Q["Query Embedding"]
+end
 
-    subgraph AI_Core ["AI Engine (Enterprise SOP Assistant)"]
-        API["FastAPI Endpoints (/chat, /derive)"]
-        
-        subgraph Orchestrator ["LangGraph Workflow"]
-            Intent["Intent Classifier (Rule-based)"]
-            Graph_Logic["Conditional Routing Logic"]
-            Summarizer["Extractive Summarizer (Sentence Similarity)"]
-            Extractor["Instruction Extractor (NLP Patterns)"]
-            Formatter["Response Formatter"]
-        end
-    end
+%% ================= VECTOR INFRA =================
+subgraph Infra ["Vector Infrastructure (Implemented)"]
+    Milvus["Milvus Vector DB"]
+    Etcd["Shared Management"]
+    MinIO["Object Storage"]
+end
 
-    subgraph Retrieval ["Knowledge Retrieval (Derive Engine)"]
-        Query_Logic["Hybrid Search & Metadata Boosting"]
-        Embedder_C["Shared Embedding Service"]
-    end
+%% ================= QUERY FLOW =================
+User --> n8n
+n8n --> API
+API --> Intent
+Intent --> Logic
+Logic --> Hybrid
+Hybrid --> Embed_Q
+Hybrid --> Milvus
+Milvus --> Hybrid
+Hybrid --> Summ
+Summ --> Extract
+Extract --> Format
+Format --> n8n
 
-    subgraph Infrastructure ["Database Infrastructure (Docker)"]
-        Milvus["Milvus Standalone (Vector DB)"]
-        Etcd["Etcd (Leases & Meta)"]
-        MinIO["MinIO (Storage)"]
-    end
+%% ================= INGESTION FLOW =================
+Files --> n8n
+n8n --> Reader
+Reader --> Chunker
+Chunker --> Embed_I
+Embed_I --> Milvus
 
-    %% Data Ingestion Flow
-    Raw_Files --> Reader
-    Reader --> Chunker
-    Chunker --> Embedder_I
-    Embedder_I --> DB_Client
-    DB_Client --> Milvus
-
-    %% Chat/Query Flow
-    API --> Intent
-    Intent --> Graph_Logic
-    Graph_Logic --> Retrieval
-    Retrieval --> Embedder_C
-    Retrieval --> Milvus
-    Milvus --> Retrieval
-    Retrieval --> Summarizer
-    Summarizer --> Extractor
-    Extractor --> Formatter
-    Formatter --> API
+%% ================= INFRA LINKS =================
+Milvus --> Etcd
+Milvus --> MinIO
 ```
 
-## Component Overview
+## Component Overview: Current vs. Target
 
-### 1. Ingestion Utility (`ingest_sops.py`)
-*   **Universal Reader**: Dynamically chooses extraction logic based on file extension.
-*   **Chunking**: Uses NLTK to split text into 5-sentence "semantic bites" to balance detail and retrieval speed.
-*   **Optimization**: Shares the same embedding model instance as the backend to save RAM.
+### 1. n8n Orchestration (Target Interface)
+*   **Workflow Engine**: **[PLANNING]** This will act as the gatekeeper. It is not yet connected to the Python backend. Its role will be to connect to Google Drive/WhatsApp/Slack and route data to our FastAPI.
 
-### 2. AI Engine (`sop_assistant_enterprise.py`)
-*   **LangGraph**: Manages the state and conversation flow. It ensures the system follows a logical path: *Identify Intent -> Retrieve Path -> Summarize -> Format*.
-*   **Hybrid Summarizer**: Does not "hallucinate" because it is purely extractive. It ranks existing sentences by similarity to your question using the transformer model.
-*   **Intent Classifier**: A lightweight pattern-matcher that detects if you want a summary, a step-by-step guide, or just a greeting.
+### 2. Ingestion Utility (`ingest_sops.py`)
+*   **Status**: **[IMPLEMENTED]** 
+*   **Logic**: Uses NLTK for semantic chunking and `pywin32` for Word doc extraction.
+*   **Storage**: Pushes directly to Milvus. We don't need a separate SQL database because Milvus stores the **Page Content**, **FileName**, and **Source Path** directly in its collection metadata.
 
-### 3. Retrieval Engine (`derive_engine.py`)
-*   **Hybrid Logic**: Combines vector similarity (mathematical relevance) with metadata boosting (prioritizing specific threat types or categories).
+### 3. AI Engine (`sop_assistant_enterprise.py`)
+*   **Status**: **[IMPLEMENTED]**
+*   **FastAPI**: Active layer that handles requests for `/chat` and `/derive`.
+*   **LangGraph**: Active workflow that manages the logic of *Identify Intent -> Retrieve Path -> Summarize -> Format*.
 
-### 4. Infrastructure (Docker)
-*   **Milvus**: Handles thousands of high-speed vector searches.
-*   **Optimization**: Merged to a single-node configuration with strict memory limits (Total ~2GB) to ensure stability on systems with 8GB RAM.
+### 4. Vector Infrastructure (Docker)
+*   **Milvus**: **[IMPLEMENTED]** This is our "Brain." It handles 100% of the long-term knowledge storage. 
+*   **Why no SQL?**: By storing metadata (filename, category) alongside vectors in Milvus, we keep the architecture thin and avoid the "double-sync" problem where SQL and Vector DBs get out of sync.
+
+### 5. Shared Memory Optimization
+*   **Status**: **[IMPLEMENTED]**
+*   **How**: All components share a single instance of `all-MiniLM-L6-v2`, reducing RAM usage by ~500MB.
 
 ---
-> [!NOTE]
-> The **Shared Embedding Service** is a critical optimization. By loading the model once in the parent process, all child components access the same memory, preventing RAM thrashing.
+> [!IMPORTANT]
+> **Minimalist Design**: We have deliberately excluded PostgreSQL and Redis. For a system processing SOPs, the Vector DB's ability to store metadata is sufficient for analytics and retrieval, keeping the footprint low.
