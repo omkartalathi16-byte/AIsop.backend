@@ -85,17 +85,17 @@ class DeriveEngine:
     - Feedback integration
     """
 
-    def __init__(self, embedding_service, milvus_service, config: Optional[DeriveConfig] = None):
+    def __init__(self, embedding_service, qdrant_service, config: Optional[DeriveConfig] = None):
         """
         Initialize the DeriveEngine with services and configuration.
         
         Args:
             embedding_service: Service for generating embeddings
-            milvus_service: Service for vector similarity search
+            qdrant_service: Service for vector similarity search
             config: Optional configuration, uses defaults if not provided
         """
         self.embedding_service = embedding_service
-        self.milvus_service = milvus_service
+        self.qdrant_service = qdrant_service
         self.config = config or DeriveConfig()
         
         # Initialize caches
@@ -305,9 +305,8 @@ class DeriveEngine:
         """
         errors = []
         
-        # Primary search
         try:
-            return self.milvus_service.search_sops(query_embedding, top_k=top_k)
+            return self.qdrant_service.search_sops(query_embedding, top_k=top_k)
         except Exception as e:
             errors.append(f"Primary search failed: {e}")
             logger.warning(f"Primary search failed, attempting fallback: {e}")
@@ -316,7 +315,7 @@ class DeriveEngine:
         try:
             reduced_k = max(top_k // 2, 5)
             logger.info(f"Attempting fallback search with reduced k={reduced_k}")
-            return self.milvus_service.search_sops(query_embedding, top_k=reduced_k)
+            return self.qdrant_service.search_sops(query_embedding, top_k=reduced_k)
         except Exception as e:
             errors.append(f"Fallback search failed: {e}")
         
@@ -669,13 +668,13 @@ class DeriveEngine:
 
 
 # Convenience factory function
-def create_derive_engine(embedding_service, milvus_service, **config_overrides):
+def create_derive_engine(embedding_service, qdrant_service, **config_overrides):
     """
     Create a DeriveEngine instance with optional configuration overrides.
     
     Args:
         embedding_service: Embedding service instance
-        milvus_service: Milvus service instance
+        qdrant_service: Qdrant service instance
         **config_overrides: Override default configuration values
         
     Returns:
@@ -690,4 +689,4 @@ def create_derive_engine(embedding_service, milvus_service, **config_overrides):
         else:
             logger.warning(f"Unknown configuration key: {key}")
     
-    return DeriveEngine(embedding_service, milvus_service, config)
+    return DeriveEngine(embedding_service, qdrant_service, config)

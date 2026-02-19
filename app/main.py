@@ -2,7 +2,7 @@ import logging
 from fastapi import FastAPI, HTTPException
 from app.models import SOPCreate, SOPSearchResult, QueryRequest, DeriveRequest, DeriveResponse, ChatRequest, ChatResponse
 from app.services.embedding_service import EmbeddingService
-from app.services.milvus_service import MilvusService
+from app.services.qdrant_service import QdrantService
 from app.services.chunk_service import ChunkService
 from app.engine.derive_engine import DeriveEngine
 from app.engine.sop_assistant_enterprise import create_enterprise_assistant
@@ -23,9 +23,9 @@ app.add_middleware(
 
 # ─── Initialize Services ──────────────────────────────────────────
 embedding_service = EmbeddingService()
-milvus_service = MilvusService()
+qdrant_service = QdrantService()
 chunk_service = ChunkService()
-derive_engine = DeriveEngine(embedding_service, milvus_service)
+derive_engine = DeriveEngine(embedding_service, qdrant_service)
 
 # Share the transformer model instance to save RAM
 sop_assistant = create_enterprise_assistant(
@@ -40,7 +40,7 @@ async def add_sop(sop: SOPCreate):
     try:
         chunks = chunk_service.chunk_text(sop.content)
         embeddings = embedding_service.generate_embeddings(chunks)
-        milvus_service.insert_sop(
+        qdrant_service.insert_sop(
             title=sop.title,
             chunks=chunks,
             embeddings=embeddings,
@@ -59,7 +59,7 @@ async def add_sop(sop: SOPCreate):
 async def search_sops(request: QueryRequest):
     try:
         query_embedding = embedding_service.generate_query_embedding(request.query)
-        results = milvus_service.search_sops(query_embedding, request.top_k)
+        results = qdrant_service.search_sops(query_embedding, request.top_k)
         return results
     except Exception as e:
         logging.error(f"Error searching SOPs: {e}")

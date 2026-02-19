@@ -1,6 +1,6 @@
 # Enterprise SOP Assistant Backend Architecture
 
-This document defines the current and target architecture. It prioritizes the **Vector DB (Milvus)** as the single source for both knowledge and metadata, removing redundant databases like PostgreSQL for simplicity.
+This document defines the current and target architecture. It prioritizes a **Single-Container Vector DB (Qdrant)** for simplicity, speed, and production readiness.
 
 ## System Architecture Diagram
 
@@ -48,9 +48,7 @@ end
 
 %% ================= VECTOR INFRA =================
 subgraph Infra ["Vector Infrastructure (Implemented)"]
-    Milvus["Milvus Vector DB"]
-    Etcd["Shared Management"]
-    MinIO["Object Storage"]
+    Qdrant["Qdrant Vector DB"]
 end
 
 %% ================= QUERY FLOW =================
@@ -60,8 +58,8 @@ API --> Intent
 Intent --> Logic
 Logic --> Hybrid
 Hybrid --> Embed_Q
-Hybrid --> Milvus
-Milvus --> Hybrid
+Hybrid --> Qdrant
+Qdrant --> Hybrid
 Hybrid --> Summ
 Summ --> Extract
 Extract --> Format
@@ -72,22 +70,21 @@ Files --> n8n
 n8n --> Reader
 Reader --> Chunker
 Chunker --> Embed_I
-Embed_I --> Milvus
+Embed_I --> Qdrant
 
 %% ================= INFRA LINKS =================
-Milvus --> Etcd
-Milvus --> MinIO
+Qdrant --> Volumes["Local Persistence"]
 ```
 
 ## Component Overview: Current vs. Target
 
 ### 1. n8n Orchestration (Target Interface)
-*   **Workflow Engine**: **[PLANNING]** This will act as the gatekeeper. It is not yet connected to the Python backend. Its role will be to connect to Google Drive/WhatsApp/Slack and route data to our FastAPI.
+*   **Workflow Engine**: **[PLANNING]** This will act as the gatekeeper, connecting to Google Drive/WhatsApp/Slack and routing data to our FastAPI.
 
 ### 2. Ingestion Utility (`ingest_sops.py`)
 *   **Status**: **[IMPLEMENTED]** 
 *   **Logic**: Uses NLTK for semantic chunking and `pywin32` for Word doc extraction.
-*   **Storage**: Pushes directly to Milvus. We don't need a separate SQL database because Milvus stores the **Page Content**, **FileName**, and **Source Path** directly in its collection metadata.
+*   **Storage**: Pushes directly to **Qdrant**.
 
 ### 3. AI Engine (`sop_assistant_enterprise.py`)
 *   **Status**: **[IMPLEMENTED]**
@@ -95,21 +92,9 @@ Milvus --> MinIO
 *   **LangGraph**: Active workflow that manages the logic of *Identify Intent -> Retrieve Path -> Summarize -> Format*.
 
 ### 4. Vector Infrastructure (Docker)
-*   **Milvus**: **[IMPLEMENTED]** This is our "Brain." It handles 100% of the long-term knowledge storage. 
-*   **Why no SQL?**: By storing metadata (filename, category) alongside vectors in Milvus, we keep the architecture thin and avoid the "double-sync" problem where SQL and Vector DBs get out of sync.
-
-### 5. Shared Memory Optimization
-*   **Status**: **[IMPLEMENTED]**
-*   **How**: All components share a single instance of `all-MiniLM-L6-v2`, reducing RAM usage by ~500MB.
-
-## Production Roadmap: When do "Extras" become necessary?
-
-While the current system is lean and functional, here is why you might eventually need the "extras" we discussed:
-
-1.  **Redis (Session Caching)**: Currently, if the server restarts, the AI might "forget" the immediate context of a conversation. Redis makes the chat **persistent** and allows you to scale to hundreds of concurrent users.
-2.  **PostgreSQL (Structured Analytics)**: Milvus is great for *searching* text, but Postgres is better for *reporting*. Use it if your manager wants a dashboard showing: "How many questions did we answer today?" or "Which SOPs are being used most?"
-3.  **Monitoring (OpenTelemetry/Prometheus)**: Crucial for production to get an alert on your phone *before* the system crashes due to memory limits.
+*   **Qdrant**: **[IMPLEMENTED]** Our unified "Brain." It handles 100% of the vector storage, search, and metadata management in a single lightweight container.
+*   **Efficiency**: Replaces the redundant 3-container Milvus setup with a highly optimized Rust-based engine.
 
 ---
 > [!IMPORTANT]
-> **Minimalist Design**: We have deliberately excluded PostgreSQL and Redis. For a system processing SOPs, the Vector DB's ability to store metadata is sufficient for analytics and retrieval, keeping the footprint low.
+> **Production Ready**: Qdrant is configured with local persistence and healthy memory limits. It is ready for the next phase of n8n integration.
