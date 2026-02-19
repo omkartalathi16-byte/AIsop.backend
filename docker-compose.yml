@@ -15,11 +15,6 @@ services:
       resources:
         limits:
           memory: 1G
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
-      interval: 30s
-      timeout: 20s
-      retries: 3
 
 networks:
   default:
