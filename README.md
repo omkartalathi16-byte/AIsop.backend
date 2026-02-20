@@ -1,9 +1,9 @@
 # SOP Fetching Engine
 
-A semantic search backend for Standard Operating Procedures using FastAPI, Milvus, and SentenceTransformers.
+A semantic search backend for Standard Operating Procedures using FastAPI, Qdrant, and SentenceTransformers.
 
 ## Features
-- Vector storage using Milvus (Docker).
+- Vector storage using Qdrant (Docker).
 - Semantic embeddings using `all-MiniLM-L6-v2`.
 - FastAPI endpoints for adding and searching SOPs.
 
@@ -13,7 +13,7 @@ A semantic search backend for Standard Operating Procedures using FastAPI, Milvu
 
 ## Setup
 
-1. **Start Milvus:**
+1. **Start Qdrant:**
    ```bash
    docker-compose up -d
    ```

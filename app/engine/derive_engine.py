@@ -436,7 +436,7 @@ class DeriveEngine:
                 with self._timer("embedding_with_cache"):
                     query_embedding = self._get_embedding_cached(query)
                 
-                # 4. Search Milvus with fallback
+                # 4. Search Qdrant with fallback
                 with self._timer("vector_search"):
                     search_k = top_k * self.config.search_multiplier
                     raw_results = self._search_with_fallback(query_embedding, search_k)
@@ -500,7 +500,7 @@ class DeriveEngine:
         Group search results by SOP title and apply metadata boosting.
         
         Args:
-            raw_results: Raw search results from Milvus
+            raw_results: Raw search results from Qdrant
             query: Original query
             threat_type: Optional threat type filter
             category: Optional category filter

@@ -44,7 +44,7 @@ if __name__ == "__main__":
     try:
         test_health()
         test_add_sop()
-        time.sleep(2) # Give Milvus a moment to flush if needed
+        time.sleep(2) # Give Qdrant a moment to flush if needed
         test_search()
     except Exception as e:
         print(f"Verification failed: {e}")
