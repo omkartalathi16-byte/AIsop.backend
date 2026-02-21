@@ -1,11 +1,11 @@
 import logging
 from fastapi import FastAPI, HTTPException
-from app.models import SOPCreate, SOPSearchResult, QueryRequest, DeriveRequest, DeriveResponse, ChatRequest, ChatResponse
+from app.models import SOPCreate, SOPSearchResult, QueryRequest, ChatRequest, ChatResponse
 from app.services.embedding_service import EmbeddingService
 from app.services.qdrant_service import QdrantService
 from app.services.chunk_service import ChunkService
-from app.engine.derive_engine import DeriveEngine
-from app.engine.sop_assistant_enterprise import create_enterprise_assistant
+from app.engine.rag_manager import RagManager
+from app.services.llm_service import LLMService
 
 logging.basicConfig(level=logging.INFO)
 
@@ -25,13 +25,12 @@ app.add_middleware(
 embedding_service = EmbeddingService()
 qdrant_service = QdrantService()
 chunk_service = ChunkService()
-derive_engine = DeriveEngine(embedding_service, qdrant_service)
 
-# Share the transformer model instance to save RAM
-sop_assistant = create_enterprise_assistant(
-    derive_engine, 
-    transformer_model=embedding_service.model
-)
+# Initialize LLM Service (Load Qwen 2.5)
+llm_service = LLMService()
+
+# Initialize Simplified RAG Manager
+rag_manager = RagManager(qdrant_service, llm_service, embedding_service)
 
 
 # ─── SOP Ingestion ────────────────────────────────────────────────
@@ -66,28 +65,11 @@ async def search_sops(request: QueryRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ─── SOP Derive (hybrid retrieval) ────────────────────────────────
-@app.post("/derive/", response_model=DeriveResponse)
-async def derive_sop(request: DeriveRequest):
-    try:
-        result = derive_engine.derive(
-            query=request.query,
-            top_k=request.top_k,
-            threat_type=request.threat_type,
-            category=request.category
-        )
-        return result
-    except Exception as e:
-        logging.error(f"Error deriving SOP: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-
 # ─── Chat Assistant ────────────────────────────────────────────────
 @app.post("/chat/", response_model=ChatResponse)
 async def chat_interaction(request: ChatRequest):
     try:
-        response = sop_assistant.chat(
+        response = rag_manager.chat(
             query=request.query,
             conversation_id=request.conversation_id,
             user_id=request.user_id

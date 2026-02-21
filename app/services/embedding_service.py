@@ -8,9 +8,9 @@ class EmbeddingService:
         self.model = SentenceTransformer(model_name, device=self.device)
 
     def generate_embeddings(self, texts: list[str]):
-        embeddings = self.model.encode(texts, convert_to_tensor=False)
+        embeddings = self.model.encode(texts, convert_to_tensor=False, show_progress_bar=False)
         return embeddings.tolist()
 
     def generate_query_embedding(self, query: str):
-        embedding = self.model.encode([query], convert_to_tensor=False)
+        embedding = self.model.encode([query], convert_to_tensor=False, show_progress_bar=False)
         return embedding[0].tolist()
