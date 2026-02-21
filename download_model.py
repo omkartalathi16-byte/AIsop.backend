@@ -38,11 +38,11 @@ if __name__ == "__main__":
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
         
-    model_url = "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf"
-    model_path = os.path.join(model_dir, "qwen2.5-3b-instruct-q4_k_m.gguf")
+    model_url = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+    model_path = os.path.join(model_dir, "qwen2.5-1.5b-instruct-q4_k_m.gguf")
     
-    # Simple check for completion: if file size > 1.8GB, consider complete for now
-    if os.path.exists(model_path) and os.path.getsize(model_path) > 1900000000:
+    # Simple check for completion: if file size > 900MB, consider complete for now
+    if os.path.exists(model_path) and os.path.getsize(model_path) > 900000000:
         print(f"Model already exists and appears complete at {model_path}")
     else:
         download_model(model_url, model_path)

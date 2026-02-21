@@ -6,7 +6,7 @@ from llama_cpp import Llama
 logger = logging.getLogger(__name__)
 
 class LLMService:
-    def __init__(self, model_path: str = "models/qwen2.5-3b-instruct-q4_k_m.gguf"):
+    def __init__(self, model_path: str = "models/qwen2.5-1.5b-instruct-q4_k_m.gguf"):
         self.model_path = model_path
         self.llm: Optional[Llama] = None
         self._initialize_model()
@@ -28,9 +28,9 @@ class LLMService:
             # n_ctx should be large enough for RAG chunks
             self.llm = Llama(
                 model_path=self.model_path,
-                n_ctx=2048,
-                n_threads=4,       # Matched to i5-4200U (4 logical processors)
-                n_batch=512,
+                n_ctx=1024,        # Reduced context size for faster evaluation
+                n_threads=2,       # Matched to i5-4200U (2 physical cores works best)
+                n_batch=256,       # Reduced batch size
                 verbose=False
             )
             logger.info("Llama model initialized successfully.")
@@ -47,7 +47,7 @@ class LLMService:
             
             response = self.llm(
                 formatted_prompt,
-                max_tokens=512,
+                max_tokens=256,
                 stop=["<|im_end|>", "<|im_start|>", "user:", "assistant:"],
                 echo=False
             )
