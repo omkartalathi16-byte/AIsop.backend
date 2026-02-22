@@ -5,3 +5,7 @@ __pycache__/
 volumes/
 .DS_Store
 models/
+cache_db/
+logs/
+test_*.py
+*test.py

@@ -4,8 +4,8 @@ from app.models import SOPCreate, SOPSearchResult, QueryRequest, ChatRequest, Ch
 from app.services.embedding_service import EmbeddingService
 from app.services.qdrant_service import QdrantService
 from app.services.chunk_service import ChunkService
-from app.engine.rag_manager import RagManager
-from app.services.llm_service import LLMService
+from app.engine.rag_manager import EnterpriseRagManager
+from app.services.llm_service import EnterpriseLLMService
 
 logging.basicConfig(level=logging.INFO)
 
@@ -27,10 +27,10 @@ qdrant_service = QdrantService()
 chunk_service = ChunkService()
 
 # Initialize LLM Service (Load Qwen 2.5)
-llm_service = LLMService()
+llm_service = EnterpriseLLMService()
 
-# Initialize Simplified RAG Manager
-rag_manager = RagManager(qdrant_service, llm_service, embedding_service)
+# Initialize Enterprise RAG Manager (LangGraph)
+rag_manager = EnterpriseRagManager(qdrant_service, llm_service, embedding_service)
 
 
 # ─── SOP Ingestion ────────────────────────────────────────────────
@@ -69,7 +69,7 @@ async def search_sops(request: QueryRequest):
 @app.post("/chat/", response_model=ChatResponse)
 async def chat_interaction(request: ChatRequest):
     try:
-        response = rag_manager.chat(
+        response = await rag_manager.chat(
             query=request.query,
             conversation_id=request.conversation_id,
             user_id=request.user_id

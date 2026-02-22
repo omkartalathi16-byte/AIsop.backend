@@ -68,3 +68,5 @@ class ChatResponse(BaseModel):
     intent: Optional[str] = None
     has_error: bool = False
     sop_count: int = 0
+    sources: List[Dict[str, Any]] = []
+    processing_time: Optional[Dict[str, Any]] = None

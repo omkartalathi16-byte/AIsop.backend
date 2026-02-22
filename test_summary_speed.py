@@ -1,7 +1,7 @@
 import time
 from app.services.embedding_service import EmbeddingService
 from app.services.qdrant_service import QdrantService
-from app.services.llm_service import LLMService
+from app.services.llm_service import EnterpriseLLMService as LLMService
 
 def test_speed():
     print("Initialize components...")

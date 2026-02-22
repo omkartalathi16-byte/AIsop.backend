@@ -15,3 +15,5 @@ python-docx>=1.1.0
 PyPDF2>=3.0.1
 pywin32>=306
 llama-cpp-python>=0.2.76
+
+lmdb==1.4.1

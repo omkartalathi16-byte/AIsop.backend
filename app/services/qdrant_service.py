@@ -10,7 +10,7 @@ class QdrantService:
         self.port = port
         self.collection_name = collection_name
         self.dim = dim
-        self.client = QdrantClient(host=self.host, port=self.port)
+        self.client = QdrantClient(host=self.host, port=self.port, timeout=2.0)
         self._set_up_collection()
 
     def _set_up_collection(self):
@@ -136,4 +136,50 @@ class QdrantService:
         except Exception as e:
             logging.error(f"Qdrant search failed: {e}")
             # Return empty results on error
+            return []
+    def search_by_keywords(self, keywords: List[str], top_k: int = 5):
+        """Simple keyword-based search using Qdrant filters"""
+        try:
+            # Construct a filter for the keywords in the content field
+            # Since Qdrant doesn't have a native 'contains any of these words' filter without full-text index
+            # We'll use a match filter for each keyword if the field is indexed, or just scroll and filter.
+            # For simplicity and broad compatibility on this setup, we'll use a scroll with a simple match.
+            
+            filter_conditions = []
+            for kw in keywords:
+                filter_conditions.append(
+                    models.FieldCondition(
+                        key="content",
+                        match=models.MatchValue(value=kw)
+                    )
+                )
+            
+            # Use ANY of the keywords
+            query_filter = models.Filter(
+                should=filter_conditions
+            )
+            
+            scroll_result = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=query_filter,
+                limit=top_k,
+                with_payload=True
+            )
+            
+            hits = scroll_result[0]
+            formatted_results = []
+            for hit in hits:
+                formatted_results.append({
+                    "id": hit.id,
+                    "title": hit.payload.get("title") if hit.payload else "",
+                    "content": hit.payload.get("content") if hit.payload else "",
+                    "sop_link": hit.payload.get("sop_link") if hit.payload else "",
+                    "threat_type": hit.payload.get("threat_type") if hit.payload else "",
+                    "category": hit.payload.get("category") if hit.payload else "",
+                    "score": 1.0 # Constant score for keyword match
+                })
+            return formatted_results
+
+        except Exception as e:
+            logging.error(f"Keyword search failed: {e}")
             return []

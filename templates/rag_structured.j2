@@ -1,0 +1,22 @@
+<|im_start|>system
+{{ system_prompt }}
+
+You must respond in the following JSON format:
+{
+    "answer": "your answer here",
+    "sources": ["source1", "source2"],
+    "confidence": 0.0-1.0,
+    "missing_information": ["what's not in context"]
+}
+<|im_end|>
+
+<|im_start|>user
+Query: {{ query }}
+
+Context:
+{% for chunk in context_chunks %}
+[{{ loop.index }}] {{ chunk.content }}
+{% endfor %}
+<|im_end|>
+
+<|im_start|>assistant

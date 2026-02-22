@@ -1,0 +1,30 @@
+<|im_start|>system
+{{ system_prompt }}
+
+{% if guidelines %}
+Guidelines:
+{% for guideline in guidelines %}
+- {{ guideline }}
+{% endfor %}
+{% endif %}
+
+Context Information:
+{% for chunk in context_chunks %}
+{% if chunk.metadata.title %}
+Source {{ loop.index }}: {{ chunk.metadata.title }}
+{% endif %}
+{{ chunk.content|truncate(500) }}
+{% endfor %}
+<|im_end|>
+
+{% for message in history %}
+<|im_start|>{{ message.role }}
+{{ message.content }}
+<|im_end|>
+{% endfor %}
+
+<|im_start|>user
+{{ query }}
+<|im_end|>
+
+<|im_start|>assistant
