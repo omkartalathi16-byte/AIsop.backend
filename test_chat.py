@@ -4,8 +4,8 @@ import json
 def test_chat():
     url = "http://localhost:8000/chat/"
     payload = {
-        "query": "how to report a security incident",
-        "user_id": "test_user"
+        "query": "vps sop procedures what are the general steps",
+        "user_id": "verify_prompt_update_99"
     }
     
     print(f"Sending request to {url}...")

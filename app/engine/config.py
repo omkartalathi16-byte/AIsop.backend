@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     MODEL_BATCH_SIZE: int = Field(256, description="Batch size for inference")
     MODEL_CONTEXT_SIZE: int = Field(1024, description="Context window size")
     
+    # OpenRouter API configurations
+    OPENROUTER_API_KEY: Optional[str] = Field(None, description="OpenRouter API Key")
+    OPENROUTER_MODEL: str = Field("stepfun/step-3.5-flash", description="OpenRouter Model String")
+    
     @validator('MODEL_THREADS', pre=True, always=True)
     def validate_threads(cls, v, values):
         """Auto-optimize threads based on resource mode"""

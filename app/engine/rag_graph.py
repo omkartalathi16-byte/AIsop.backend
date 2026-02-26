@@ -600,7 +600,10 @@ class RagGraph:
                 # First turn: start with full initial state
                 final_state = await compiled.ainvoke(initial_state, config=config)
             else:
-                # Subsequent turns: only pass input fields
+                # Subsequent turns: load existing history and merge with new input
+                existing_state = await self.checkpointer.aget(config)
+                existing_history = existing_state.get("history", []) if existing_state else []
+                
                 input_data = {
                     "query": query,
                     "conversation_id": conversation_id,
@@ -610,9 +613,29 @@ class RagGraph:
                     "cache_key": f"{xxhash.xxh64(query.encode()).hexdigest()}:{conversation_id}",
                     "processing_time": {},
                     "errors": [],
-                    "metadata": {}
+                    "metadata": {},
+                    "history": existing_history  # Preserve conversation history
                 }
                 final_state = await compiled.ainvoke(input_data, config=config)
+            
+            # Append current turn to history for next iteration
+            if final_state.get("response"):
+                updated_history = final_state.get("history", [])
+                updated_history.append({
+                    "role": "user",
+                    "content": query,
+                    "timestamp": datetime.now().isoformat()
+                })
+                updated_history.append({
+                    "role": "assistant",
+                    "content": final_state.get("response", ""),
+                    "timestamp": datetime.now().isoformat()
+                })
+                final_state["history"] = updated_history
+            
+            # Save final state with updated history
+            if self.checkpointer:
+                await self.checkpointer.asave(config, final_state)
             
             # Add total processing time
             final_state["processing_time"]["total"] = time.perf_counter() - start_time

@@ -1,0 +1,12 @@
+Context Information:
+{% for chunk in context_chunks %}
+Source {{ loop.index }}: {{ chunk.metadata.title }}
+{{ chunk.content }}
+{% endfor %}
+
+Guidelines:
+{% for guideline in guidelines %}
+- {{ guideline }}
+{% endfor %}
+
+User Query: {{ query }}

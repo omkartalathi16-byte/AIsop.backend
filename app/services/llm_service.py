@@ -42,8 +42,16 @@ import numpy as np
 from cachetools import TTLCache, LRUCache
 import xxhash
 
+# Third-party imports for OpenRouter
+import requests
+from dotenv import load_dotenv
+
 # Local imports
 from llama_cpp import Llama, LlamaGrammar, LogitsProcessorList
+from app.engine.config import settings
+
+# Load environment variables
+load_dotenv()
 
 # Configure structured logging
 structlog.configure(
@@ -371,7 +379,30 @@ Context:
 <|im_end|>
 
 <|im_start|>assistant
-"""
+""",
+            'rag_api.j2': """
+System: {{ system_prompt }}
+
+{% if guidelines %}
+Guidelines:
+{% for guideline in guidelines %}
+- {{ guideline }}
+{% endfor %}
+{% endif %}
+
+Context Information:
+{% for chunk in context_chunks %}
+Source {{ loop.index }}: {{ chunk.metadata.title }}
+{{ chunk.content|truncate(500) }}
+{% endfor %}
+
+{% for message in history %}
+{{ message.role|capitalize }}: {{ message.content }}
+{% endfor %}
+
+User Question: {{ query }}
+
+Assistant:"""
         }
         
         for name, content in templates.items():
@@ -625,6 +656,11 @@ class EnterpriseLLMService:
         self.cache_manager = CacheManager(redis_url=redis_url) if enable_caching else None
         self.audit_logger = AuditLogger(Path("logs/audit"), audit_level)
         self.circuit_breaker = CircuitBreaker() if enable_circuit_breaker else None
+        self.openrouter_circuit_breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=300) if enable_circuit_breaker else None
+        
+        # OpenRouter Configuration
+        self.openrouter_api_key = settings.OPENROUTER_API_KEY
+        self.openrouter_model = settings.OPENROUTER_MODEL
         
         # Metrics and monitoring
         self.metrics = defaultdict(float)
@@ -762,14 +798,70 @@ class EnterpriseLLMService:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=4, max=10),
         retry=retry_if_exception_type(Exception),
-        before_sleep=before_sleep_log(logger, logging.WARNING)
+        before_sleep=before_sleep_log(logger,logging.WARNING)
     )
     def _generate_with_retry(self, *args, **kwargs):
-        """Generate with retry logic"""
+        """Generate with local Llama retry logic"""
         if self.circuit_breaker:
             return self.circuit_breaker(self.llm)(*args, **kwargs)
         return self.llm(*args, **kwargs)
-    
+        
+    def _call_openrouter(self, prompt: str, config: GenerationConfig, system_prompt: str = "", history: Optional[List[Dict[str, str]]] = None) -> str:
+        """Helper to call OpenRouter API with history support"""
+        if self.openrouter_circuit_breaker:
+            return self.openrouter_circuit_breaker(self._do_call_openrouter)(prompt, config, system_prompt, history)
+        return self._do_call_openrouter(prompt, config, system_prompt, history)
+
+    def _do_call_openrouter(self, prompt: str, config: GenerationConfig, system_prompt: str = "", history: Optional[List[Dict[str, str]]] = None) -> str:
+        """Internal helper to execute OpenRouter API call"""
+        if not self.openrouter_api_key:
+            raise ValueError("OpenRouter API key not configured")
+            
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        
+        # Add history if provided
+        if history:
+            for msg in history:
+                messages.append({"role": msg["role"], "content": msg["content"]})
+                
+        messages.append({"role": "user", "content": prompt})
+        
+        logger.info(f"Sending request to OpenRouter model {self.openrouter_model}. Prompt length: {len(prompt)}, History length: {len(history) if history else 0}")
+        logger.debug(f"FULL PROMPT: {prompt}")
+
+        response = requests.post(
+            url="https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.openrouter_api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "http://localhost:8000",
+                "X-Title": "AIsop Backend",
+            },
+            data=json.dumps({
+                "model": self.openrouter_model,
+                "messages": messages,
+                "temperature": config.temperature,
+                # Use a sensible min for API calls - local model configs may be too restrictive
+                "max_tokens": max(config.max_tokens, 2000),
+                "top_p": config.top_p,
+                "frequency_penalty": config.frequency_penalty,
+                "presence_penalty": config.presence_penalty,
+                # Do NOT pass local-model stop sequences (e.g. "\n\n") to API models
+                # as they immediately truncate the response
+            }),
+            timeout=60 # Increase timeout
+        )
+        
+        
+        response.raise_for_status() # Raise exception for bad status codes
+        
+        result = response.json()
+        content = result['choices'][0]['message']['content'].strip()
+        logger.info(f"OpenRouter response content received (first 100 chars): {content[:100]}...")
+        return content
+
     # Removed @LLM_LATENCY.time() because it fails on metrics with labels
     def generate_response(
         self,
@@ -839,56 +931,76 @@ class EnterpriseLLMService:
                 return cached_response
         
         try:
-            if not self.llm:
-                raise RuntimeError("LLM service not initialized")
+            # Try OpenRouter First (if configured and not streaming)
+            result = None
+            if self.openrouter_api_key and not stream:
+                try:
+                    logger.info(f"Attempting OpenRouter API call using model: {self.openrouter_model}")
+                    # For basic generation, we pass prompt, system_prompt and history separately to OpenRouter
+                    result = self._call_openrouter(
+                        prompt=query, 
+                        config=config, 
+                        system_prompt=system_prompt,
+                        history=history
+                    )
+                    logger.info("OpenRouter API call successful.")
+                except Exception as or_err:
+                    logger.warning(f"OpenRouter API failed, falling back to local Llama: {or_err}")
+                    result = None # trigger fallback
             
-            # Format prompt using template
-            formatted_prompt = self.template_manager.render(
-                template_name,
-                query=query,
-                context_chunks=[],  # No context for basic generation
-                system_prompt=system_prompt,
-                history=history
-            )
-            
-            # Prepare generation parameters
-            gen_kwargs = {
-                "prompt": formatted_prompt,
-                "max_tokens": config.max_tokens,
-                "temperature": config.temperature,
-                "top_p": config.top_p,
-                "top_k": config.top_k,
-                "repeat_penalty": config.repeat_penalty,
-                "frequency_penalty": config.frequency_penalty,
-                "presence_penalty": config.presence_penalty,
-                "stop": config.stop_sequences or ["<|im_end|>", "<|im_start|>"],
-                "echo": False,
-                "stream": stream,
-                "logit_bias": config.logit_bias,
-                "mirostat_mode": config.mirostat_mode,
-                "mirostat_tau": config.mirostat_tau,
-                "mirostat_eta": config.mirostat_eta,
-                "typical_p": config.typical_p,
-                "tfs_z": config.tfs_z
-            }
-            
-            if grammar:
-                gen_kwargs["grammar"] = grammar
-            
-            # Generate with retry
-            response = self._generate_with_retry(**gen_kwargs)
-            
-            # Update token stats
-            if not stream and 'usage' in response:
-                tokens_used = response['usage'].get('total_tokens', 0)
-                self.stats['total_tokens'] += tokens_used
-                LLM_TOKENS.labels(type='total').inc(tokens_used)
-            
-            # Process response
-            if stream:
-                return self._handle_stream_response(response, cache_key if self.enable_caching else None)
-            
-            result = response['choices'][0]['text'].strip()
+            # Fallback to local Llama
+            if result is None:
+                if not self.llm:
+                    raise RuntimeError("LLM service not initialized for local fallback")
+                
+                logger.info("Generating response using local Llama model.")
+                # Format prompt using template
+                formatted_prompt = self.template_manager.render(
+                    template_name,
+                    query=query,
+                    context_chunks=[], 
+                    system_prompt=system_prompt,
+                    history=history
+                )
+                
+                # Prepare generation parameters
+                gen_kwargs = {
+                    "prompt": formatted_prompt,
+                    "max_tokens": config.max_tokens,
+                    "temperature": config.temperature,
+                    "top_p": config.top_p,
+                    "top_k": config.top_k,
+                    "repeat_penalty": config.repeat_penalty,
+                    "frequency_penalty": config.frequency_penalty,
+                    "presence_penalty": config.presence_penalty,
+                    "stop": config.stop_sequences or ["<|im_end|>", "<|im_start|>"],
+                    "echo": False,
+                    "stream": stream,
+                    "logit_bias": config.logit_bias,
+                    "mirostat_mode": config.mirostat_mode,
+                    "mirostat_tau": config.mirostat_tau,
+                    "mirostat_eta": config.mirostat_eta,
+                    "typical_p": config.typical_p,
+                    "tfs_z": config.tfs_z
+                }
+                
+                if grammar:
+                    gen_kwargs["grammar"] = grammar
+                
+                # Generate with retry
+                response = self._generate_with_retry(**gen_kwargs)
+                
+                # Update token stats
+                if not stream and 'usage' in response:
+                    tokens_used = response['usage'].get('total_tokens', 0)
+                    self.stats['total_tokens'] += tokens_used
+                    LLM_TOKENS.labels(type='total').inc(tokens_used)
+                
+                # Process response
+                if stream:
+                    return self._handle_stream_response(response, cache_key if self.enable_caching else None)
+                
+                result = response['choices'][0]['text'].strip()
             
             # Cache successful response
             if self.enable_caching and self.cache_manager and result:
@@ -1000,32 +1112,74 @@ class EnterpriseLLMService:
             if structured_output:
                 template_name = "rag_structured.j2"
             
-            # Render prompt
-            formatted_prompt = self.template_manager.render(
-                template_name,
-                query=query,
-                context_chunks=optimized_chunks,
-                system_prompt=self._get_system_prompt(mode),
-                guidelines=guidelines or [],
-                history=history or []
-            )
-            
-            # Get config for mode
+            # Determine config
             config = GenerationConfig.for_mode(mode)
             
-            # Generate response
-            response = self._generate_with_retry(
-                formatted_prompt,
-                max_tokens=config.max_tokens,
-                temperature=config.temperature,
-                top_p=config.top_p,
-                top_k=config.top_k,
-                repeat_penalty=config.repeat_penalty,
-                stop=config.stop_sequences or ["<|im_end|>", "<|im_start|>"],
-                echo=False
-            )
+            # Try OpenRouter First
+            result = None
+            response = {} # Prevent UnboundLocalError if OpenRouter succeeds
+            if self.openrouter_api_key and not structured_output: # OpenRouter doesn't perfectly support the specific grammar/structured output used by llama_cpp out of the box in this script without modification
+                try:
+                    logger.info(f"Attempting OpenRouter API call for RAG synthesis using model: {self.openrouter_model}")
+                    # Use a cleaner template for API calls to avoid ChatML confusion
+                    api_template = "rag_api.j2"
+                    
+                    formatted_prompt = self.template_manager.render(
+                        api_template,
+                        query=query,
+                        context_chunks=optimized_chunks,
+                        system_prompt="", # We pass system prompt separately to _call_openrouter
+                        guidelines=guidelines or [],
+                        history=[] # We pass history separately to _call_openrouter
+                    )
+                    
+                    result = self._call_openrouter(
+                        prompt=formatted_prompt, 
+                        config=config,
+                        system_prompt=self._get_system_prompt(mode),
+                        history=history or []
+                    )
+                    logger.info(f"OpenRouter RAG synthesis API call successful. Result length: {len(result) if result else 0}")
+                    if not result:
+                        logger.warning(f"EMPTY RESPONSE FROM OPENROUTER. Prompt sent: {formatted_prompt}")
+                except Exception as or_err:
+                    logger.warning(f"OpenRouter RAG synthesis failed, falling back to local Llama: {or_err}")
+                    result = None # trigger fallback
             
-            result = response['choices'][0]['text'].strip()
+            # Fallback to local Llama
+            if result is None:
+                if not self.llm:
+                    raise RuntimeError("LLM service not initialized for local fallback")
+
+                logger.info("Generating RAG response using local Llama model.")
+
+                # Render prompt
+                formatted_prompt = self.template_manager.render(
+                    template_name,
+                    query=query,
+                    context_chunks=optimized_chunks,
+                    system_prompt=self._get_system_prompt(mode),
+                    guidelines=guidelines or [],
+                    history=history or []
+                )
+                
+                # Generate response
+                response = self._generate_with_retry(
+                    formatted_prompt,
+                    max_tokens=config.max_tokens,
+                    temperature=config.temperature,
+                    top_p=config.top_p,
+                    top_k=config.top_k,
+                    repeat_penalty=config.repeat_penalty,
+                    stop=config.stop_sequences or ["<|im_end|>", "<|im_start|>"],
+                    echo=False
+                )
+                
+                result = response['choices'][0]['text'].strip()
+                
+                # Update stats
+                if 'usage' in response:
+                    self.stats['total_tokens'] += response['usage'].get('total_tokens', 0)
             
             # Parse structured output if requested
             if structured_output:
@@ -1110,26 +1264,26 @@ class EnterpriseLLMService:
         """Get system prompt for specific mode"""
         prompts = {
             ResponseMode.CONCISE: (
-                "You are a precise enterprise assistant. Answer using ONLY the provided context. "
-                "If the answer isn't in the context, say 'This information is not available in the provided documents.' "
-                "Keep responses brief and factual."
+                "You are a precise enterprise assistant. Answer using the provided context. "
+                "If the exact procedure is not in the context, state that 'this specific procedure is not detailed in the available SOPs', "
+                "but then provide 7-8 general best-practice recommendations related to the topic to be helpful."
             ),
             ResponseMode.DETAILED: (
                 "You are a comprehensive enterprise assistant. Provide detailed answers based on the context. "
-                "If information is partially available, explain what you know and what's missing. "
-                "Cite specific sections from the context when possible."
+                "If information is partially available or missing, explain what is covered in the SOPs, "
+                "and then provide 7 general expert recommendations or next steps relevant to the user's query."
             ),
             ResponseMode.STRICT: (
-                "You are a strict compliance assistant. Only use information explicitly stated in the context. "
+                "You are a strict compliance assistant. Only use information stated in the context. "
                 "Do not make inferences or add external knowledge. If information is missing, state that clearly."
             ),
             ResponseMode.ANALYTICAL: (
-                "You are an analytical assistant. Analyze the provided context and provide insights. "
+                "You are an analytical assistant. Analyze the provided context and provide Detail insights. "
                 "Compare and contrast information from different sources. Highlight key patterns and implications."
             ),
             ResponseMode.SUMMARIZATION: (
-                "You are a summarization assistant. Create a concise summary of the key information from the context. "
-                "Focus on the most important points and exclude redundant information."
+                "You are a summarization assistant. Create a strong detail summary of the key information from the context. "
+                "Focus on the most important points and exclude less redundant information."
             )
         }
         return prompts.get(mode, prompts[ResponseMode.CONCISE])
