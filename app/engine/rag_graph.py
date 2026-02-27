@@ -6,6 +6,7 @@ CPU-optimized while preserving all features.
 import asyncio
 import time
 import uuid
+import operator
 from typing import Dict, Any, Optional, List, Literal, TypedDict, Annotated
 from datetime import datetime
 import xxhash
@@ -59,7 +60,7 @@ class RAGState(TypedDict):
     query_embedding: Optional[List[float]]
     
     # Conversation History
-    history: List[Dict[str, str]]
+    history: Annotated[List[Dict[str, str]], operator.add]
     
     # Retrieval fields
     retrieved_docs: List[Dict[str, Any]]
@@ -72,7 +73,7 @@ class RAGState(TypedDict):
     
     # Metadata
     processing_time: Dict[str, float]
-    errors: List[Dict[str, Any]]
+    errors: Annotated[List[Dict[str, Any]], operator.add]
     metadata: Dict[str, Any]
     
     # A/B testing
@@ -109,9 +110,11 @@ def route_after_intent(state: RAGState) -> Literal["retriever", "general_chat", 
     else:
         return "general_chat"
 
-def route_after_retrieval(state: RAGState) -> Literal["context_builder", "formatter"]:
+def route_after_retrieval(state: RAGState) -> Literal["reranker", "context_builder", "formatter"]:
     """Route based on retrieval success"""
     if state.get("retrieved_docs"):
+        if settings.RERANKER_ENABLED:
+            return "reranker"
         return "context_builder"
     return "formatter"  # Skip to formatter with no context
 
@@ -208,6 +211,9 @@ class LazyNodeLoader:
             elif node_name == "feedback":
                 from app.engine.nodes import FeedbackCollectorNode
                 self._nodes[node_name] = FeedbackCollectorNode()
+            elif node_name == "reranker":
+                from app.services.reranker_service import RerankerService
+                self._nodes[node_name] = RerankerService()
         
         return self._nodes[node_name]
 
@@ -304,6 +310,41 @@ async def retriever_node(state: RAGState) -> RAGState:
     
     finally:
         state["processing_time"]["retriever"] = time.perf_counter() - start
+    
+    return state
+
+async def reranker_node(state: RAGState) -> RAGState:
+    """Re-rank retrieved documents using Cross-Encoder for better precision."""
+    start = time.perf_counter()
+    
+    try:
+        reranker = node_loader.get_node("reranker")
+        query = state.get("query", "")
+        docs = state.get("retrieved_docs", [])
+        
+        if docs and reranker:
+            loop = asyncio.get_event_loop()
+            reranked = await loop.run_in_executor(
+                None,
+                lambda: reranker.rerank(query, docs)
+            )
+            state["retrieved_docs"] = reranked
+            logger.info(
+                "Re-ranking complete",
+                original_count=len(docs),
+                reranked_count=len(reranked)
+            )
+    
+    except Exception as e:
+        logger.error("Re-ranking failed, keeping original docs", error=str(e))
+        state["errors"].append({
+            "node": "reranker",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    finally:
+        state["processing_time"]["reranker"] = time.perf_counter() - start
     
     return state
 
@@ -463,6 +504,7 @@ class RagGraph:
         graph.add_node("cache_check", cache_check_node)
         graph.add_node("intent_classifier", intent_classifier_node)
         graph.add_node("retriever", retriever_node)
+        graph.add_node("reranker", reranker_node)
         graph.add_node("context_builder", context_builder_node)
         graph.add_node("answer_generator", answer_generator_node)
         graph.add_node("general_chat", general_chat_node)
@@ -497,15 +539,19 @@ class RagGraph:
             }
         )
         
-        # Retriever -> Context Builder (conditional)
+        # Retriever -> Reranker or Context Builder (conditional)
         graph.add_conditional_edges(
             "retriever",
             route_after_retrieval,
             {
+                "reranker": "reranker",
                 "context_builder": "context_builder",
                 "formatter": "formatter"
             }
         )
+        
+        # Reranker -> Context Builder
+        graph.add_edge("reranker", "context_builder")
         
         # Context Builder -> Answer Generator (conditional)
         graph.add_conditional_edges(
@@ -591,51 +637,23 @@ class RagGraph:
             # Add config with checkpoint if enabled
             config = {"configurable": {"thread_id": conversation_id}}
             
-            # Check if state already exists (to avoid resetting history)
-            state_exists = False
-            if self.checkpointer:
-                state_exists = bool(await self.checkpointer.aget(config))
+            # Prepare input data. 
+            # Note: We do NOT pass an empty 'history' list here, 
+            # as LangGraph will merge (add) it with the existing history in the checkpoint.
+            input_data = {
+                "query": query,
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "session_id": session_id,
+                "status": "processing",
+                "cache_key": f"{xxhash.xxh64(query.encode()).hexdigest()}:{conversation_id}",
+                "processing_time": {},
+                "retrieved_docs": [],
+                "context_chunks": [],
+                "metadata": {}
+            }
             
-            if not state_exists:
-                # First turn: start with full initial state
-                final_state = await compiled.ainvoke(initial_state, config=config)
-            else:
-                # Subsequent turns: load existing history and merge with new input
-                existing_state = await self.checkpointer.aget(config)
-                existing_history = existing_state.get("history", []) if existing_state else []
-                
-                input_data = {
-                    "query": query,
-                    "conversation_id": conversation_id,
-                    "user_id": user_id,
-                    "session_id": session_id,
-                    "status": "processing",
-                    "cache_key": f"{xxhash.xxh64(query.encode()).hexdigest()}:{conversation_id}",
-                    "processing_time": {},
-                    "errors": [],
-                    "metadata": {},
-                    "history": existing_history  # Preserve conversation history
-                }
-                final_state = await compiled.ainvoke(input_data, config=config)
-            
-            # Append current turn to history for next iteration
-            if final_state.get("response"):
-                updated_history = final_state.get("history", [])
-                updated_history.append({
-                    "role": "user",
-                    "content": query,
-                    "timestamp": datetime.now().isoformat()
-                })
-                updated_history.append({
-                    "role": "assistant",
-                    "content": final_state.get("response", ""),
-                    "timestamp": datetime.now().isoformat()
-                })
-                final_state["history"] = updated_history
-            
-            # Save final state with updated history
-            if self.checkpointer:
-                await self.checkpointer.asave(config, final_state)
+            final_state = await compiled.ainvoke(input_data, config=config)
             
             # Add total processing time
             final_state["processing_time"]["total"] = time.perf_counter() - start_time

@@ -11,9 +11,11 @@ spacy>=3.8.11
 langgraph>=0.1.0
 langchain-core>=0.1.10
 numpy>=1.26.0
-python-docx>=1.1.0
-PyPDF2>=3.0.1
-pywin32>=306
+unstructured[docx,pdf]
 llama-cpp-python>=0.2.76
 
 lmdb==1.4.1
+msgraph-sdk
+azure-identity
+msal
+langgraph-checkpoint-sqlite

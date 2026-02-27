@@ -47,6 +47,44 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: Optional[str] = Field(None, description="OpenRouter API Key")
     OPENROUTER_MODEL: str = Field("stepfun/step-3.5-flash", description="OpenRouter Model String")
     
+    # ============================================================================
+    # Qdrant Settings
+    # ============================================================================
+    QDRANT_HOST: str = Field("127.0.0.1", description="Qdrant server host")
+    QDRANT_PORT: int = Field(6333, description="Qdrant server port")
+    QDRANT_COLLECTION: str = Field("sop_collection", description="Qdrant collection name")
+    QDRANT_VECTOR_DIM: int = Field(384, description="Embedding vector dimension")
+    
+    # ============================================================================
+    # Embedding Settings
+    # ============================================================================
+    EMBEDDING_MODEL: str = Field("default", description="Embedding model name")
+    EMBEDDING_BATCH_SIZE: int = Field(16, description="Embedding batch size")
+    EMBEDDING_MAX_SEQ_LENGTH: int = Field(256, description="Max sequence length for embeddings")
+    
+    # ============================================================================
+    # Chunking Settings
+    # ============================================================================
+    CHUNK_SENTENCES: int = Field(5, description="Sentences per chunk")
+    CHUNK_MIN_SIZE: int = Field(50, description="Min characters per chunk")
+    CHUNK_MAX_SIZE: int = Field(1000, description="Max characters per chunk")
+    
+    # ============================================================================
+    # Re-ranker Settings
+    # ============================================================================
+    RERANKER_ENABLED: bool = Field(True, description="Enable Cross-Encoder re-ranking")
+    RERANKER_MODEL: str = Field("cross-encoder/ms-marco-MiniLM-L-2-v2", description="Cross-Encoder model")
+    RERANKER_TOP_K: int = Field(5, description="Final docs after re-ranking")
+    RETRIEVAL_INITIAL_K: int = Field(15, description="Broader retrieval before re-ranking")
+    
+    # ============================================================================
+    # API Settings
+    # ============================================================================
+    API_HOST: str = Field("0.0.0.0", description="API server host")
+    API_PORT: int = Field(8000, description="API server port")
+    API_KEY: Optional[str] = Field(None, description="Secret key required in X-API-KEY header")
+    ALLOWED_ORIGINS: str = Field("http://localhost:3000,http://localhost:8080,http://127.0.0.1:5500", description="Comma-separated allowed CORS origins")
+    
     @validator('MODEL_THREADS', pre=True, always=True)
     def validate_threads(cls, v, values):
         """Auto-optimize threads based on resource mode"""
@@ -162,6 +200,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"
 
 # Global settings instance
 settings = Settings()

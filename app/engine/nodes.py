@@ -59,10 +59,10 @@ class LightweightIntentClassifier:
         # Patterns (always available, no loading cost)
         self.patterns = {
             "sop_question": [
-                r'\b(how\s+do\s+I|procedure|process|policy|rule|regulation|guideline)\b',
-                r'\b(sop|standard\s+operating\s+procedure|protocol|workflow)\b',
-                r'\b(what\s+is\s+the\s+(policy|procedure|rule))\b',
-                r'\b(can\s+you\s+explain|tell\s+me\s+about)\b.*\b(procedure|process|policy)\b',
+                r'\b(how\s+do\s+I|procedure|process|policy|rule|regulation|guideline|tier|gap)\b',
+                r'\b(sop|standard\s+operating\s+procedure|protocol|workflow|report|document)\b',
+                r'\b(what\s+is\s+the\s+(policy|procedure|rule|tier|finding|gap))\b',
+                r'\b(can\s+you\s+explain|tell\s+me\s+about)\b.*\b(procedure|process|policy|report)\b',
                 r'\b(not\s+working|issue|problem|fix|troubleshoot|why\s+is\s+my|how\s+to)\b',
                 r'\b(how\s+can\s+I|where\s+can\s+I|step\s+by\s+step)\b'
             ],
@@ -458,7 +458,9 @@ class RetrieverNode(BaseNode):
             
             # Sort by score
             all_docs.sort(key=lambda x: x.get("score", 0), reverse=True)
-            all_docs = all_docs[:settings.RETRIEVAL_TOP_K]
+            # Use broader retrieval when re-ranking is enabled
+            top_k_limit = settings.RETRIEVAL_INITIAL_K if settings.RERANKER_ENABLED else settings.RETRIEVAL_TOP_K
+            all_docs = all_docs[:top_k_limit]
             
             # Cache results
             self.cache[cache_key] = all_docs

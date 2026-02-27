@@ -10,6 +10,10 @@ class SOPCreate(BaseModel):
     category: Optional[str] = None
 
 
+class SOPBatchCreate(BaseModel):
+    items: List[SOPCreate]
+
+
 class SOPSearchResult(BaseModel):
     title: str
     content: str

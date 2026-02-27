@@ -8,6 +8,7 @@ import logging
 from typing import List, Optional
 from functools import lru_cache
 import time
+from app.engine.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -44,15 +45,15 @@ class ChunkService:
     
     def __init__(
         self,
-        sentences_per_chunk: int = 5,
-        min_chunk_size: int = 50,      # Minimum characters per chunk
-        max_chunk_size: int = 1000,     # Maximum characters per chunk
+        sentences_per_chunk: int = None,
+        min_chunk_size: int = None,
+        max_chunk_size: int = None,
         use_abbreviation_detection: bool = True,
         enable_caching: bool = True
     ):
-        self.sentences_per_chunk = sentences_per_chunk
-        self.min_chunk_size = min_chunk_size
-        self.max_chunk_size = max_chunk_size
+        self.sentences_per_chunk = sentences_per_chunk or settings.CHUNK_SENTENCES
+        self.min_chunk_size = min_chunk_size or settings.CHUNK_MIN_SIZE
+        self.max_chunk_size = max_chunk_size or settings.CHUNK_MAX_SIZE
         self.use_abbreviation_detection = use_abbreviation_detection
         self.enable_caching = enable_caching
         

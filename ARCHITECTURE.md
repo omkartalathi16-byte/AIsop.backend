@@ -1,100 +1,105 @@
 # Enterprise SOP Assistant Backend Architecture
 
-This document defines the current and target architecture. It prioritizes a **Single-Container Vector DB (Qdrant)** for simplicity, speed, and production readiness.
+This document defines the current backend architecture. It prioritizes a **FastAPI** backend with a **Single-Container Vector DB (Qdrant)** for simplicity, speed, and production readiness.
 
 ## System Architecture Diagram
 
 ```mermaid
 graph TD
 
-%% ================= USER LAYER =================
-User["User / SOC Analyst"]
+%% ================= CLIENT LAYER =================
+Client["Microsoft Teams Bot / External Client"]
 
-%% ================= ORCHESTRATION =================
-subgraph Orchestration ["n8n - Central Nervous System"]
-    n8n["Workflow Engine (Target)"]
-end
+%% ================= BACKEND LAYER =================
+subgraph Backend ["FastAPI Backend (AIsop)"]
+    API["FastAPI App (main.py)"]
 
-%% ================= DATA SOURCE =================
-subgraph Data_Source ["Data Layer"]
-    Files["SOP Documents (.pdf .docx .txt .py)"]
-end
+    subgraph Middleware ["Middleware & Core"]
+        Auth["API Key Auth (X-API-KEY)"]
+        RateLimit["Rate Limiter (In-Memory)"]
+        CORS["CORS (Hardened)"]
+        Metrics["Prometheus (/metrics)"]
+        Logs["Structured Logs (structlog)"]
+    end
 
-%% ================= INGESTION =================
-subgraph Ingestion ["Ingestion Pipeline (Implemented)"]
-    Reader["Universal Reader"]
-    Chunker["NLTK Chunking"]
-    Embed_I["Embedding Service (Shared)"]
-end
+    subgraph Services ["Service Layer"]
+        RAG["RAG Manager (rag_manager.py)"]
+        LLM["LLM Service (OpenRouter)"]
+        Qdrant["Qdrant Service (Vector DB Client)"]
+        Embed["Embedding Service (BGE-Small)"]
+        Chunk["Chunk Service (Semantic)"]
+    end
 
-%% ================= AI CORE =================
-subgraph AI_Core ["AI Engine (Implemented)"]
-    API["FastAPI (/chat /derive)"]
-
-    subgraph LangGraph ["LangGraph Workflow"]
-        Intent["Intent Classifier"]
-        Logic["Routing Logic"]
-        Summ["Summarizer"]
-        Extract["Instruction Extractor"]
-        Format["Response Formatter"]
+    subgraph Workers ["Background Tasks"]
+        IngestJob["Async Ingestion Job"]
+        StatusTracker["Job Status Tracker"]
     end
 end
 
-%% ================= RETRIEVAL =================
-subgraph Retrieval ["Knowledge Retrieval"]
-    Hybrid["Hybrid Search"]
-    Embed_Q["Query Embedding"]
-end
-
-%% ================= VECTOR INFRA =================
-subgraph Infra ["Vector Infrastructure (Implemented)"]
-    Qdrant["Qdrant Vector DB"]
+%% ================= INFRASTRUCTURE =================
+subgraph Infra ["External Infrastructure"]
+    QDB["Qdrant Vector DB (Docker)"]
+    OpenRouter["OpenRouter LLM API"]
+    Prom["Prometheus / Grafana"]
 end
 
 %% ================= QUERY FLOW =================
-User --> n8n
-n8n --> API
-API --> Intent
-Intent --> Logic
-Logic --> Hybrid
-Hybrid --> Embed_Q
-Hybrid --> Qdrant
-Qdrant --> Hybrid
-Hybrid --> Summ
-Summ --> Extract
-Extract --> Format
-Format --> n8n
+Client -->|"POST /chat {X-API-KEY}"| Auth
+Auth --> RateLimit
+RateLimit --> API
+API --> RAG
+RAG --> Embed
+Embed --> Qdrant
+Qdrant --> QDB
+QDB --> Qdrant
+RAG --> LLM
+LLM --> OpenRouter
+OpenRouter --> LLM
+LLM --> RAG
+RAG --> API
+API --> Client
 
 %% ================= INGESTION FLOW =================
-Files --> n8n
-n8n --> Reader
-Reader --> Chunker
-Chunker --> Embed_I
-Embed_I --> Qdrant
+Client -->|"POST /sops"| IngestJob
+IngestJob --> Chunk
+Chunk --> Embed
+Embed --> Qdrant
+Qdrant --> QDB
+IngestJob --> StatusTracker
+Client -->|"GET /sops/status/{id}"| StatusTracker
 
-%% ================= INFRA LINKS =================
-Qdrant --> Volumes["Local Persistence"]
+%% ================= OBSERVABILITY =================
+API --- Metrics
+API --- Logs
+Metrics --> Prom
 ```
 
-## Component Overview: Current vs. Target
+## Component Overview
 
-### 1. n8n Orchestration (Target Interface)
-*   **Workflow Engine**: **[PLANNING]** This will act as the gatekeeper, connecting to Google Drive/WhatsApp/Slack and routing data to our FastAPI.
+### 1. API Security & Control
+*   **API Key Authentication**: Required for all protected endpoints (`/chat`, `/search`, `/sops`). Validates the `X-API-KEY` header using `secrets.compare_digest`.
+*   **Rate Limiting**: Protects against DOS by limiting requests per window (IP-based).
+*   **CORS Hardening**: Strictly allows origins defined in `.env`.
 
-### 2. Ingestion Utility (`ingest_sops.py`)
-*   **Status**: **[IMPLEMENTED]** 
-*   **Logic**: Uses NLTK for semantic chunking and `pywin32` for Word doc extraction.
-*   **Storage**: Pushes directly to **Qdrant**.
+### 2. Service Layer
+*   **RAG Manager**: Orchestrates the interaction between the query, vector search, and LLM to provide context-aware answers.
+*   **LLM Service**: Connects to **OpenRouter** (e.g., StepFun Step-3.5-Flash) for response generation.
+*   **Qdrant Service**: Handles all vector operations (Insert, Search, Health).
+*   **Embedding Service**: Uses local `bge-small-en-v1.5` for high-performance vector creation.
+*   **Chunk Service**: Implements semantic chunking logic.
 
-### 3. AI Engine (`sop_assistant_enterprise.py`)
-*   **Status**: **[IMPLEMENTED]**
-*   **FastAPI**: Active layer that handles requests for `/chat` and `/derive`.
-*   **LangGraph**: Active workflow that manages the logic of *Identify Intent -> Retrieve Path -> Summarize -> Format*.
+### 3. Ingestion Pipeline
+*   **Asynchronous Ingestion**: Ingesting large SOPs happens in the background to prevent request timeouts.
+*   **Job Status Tracking**: Clients can query the status of their ingestion tasks via `/sops/status/{job_id}`.
 
-### 4. Vector Infrastructure (Docker)
-*   **Qdrant**: **[IMPLEMENTED]** Our unified "Brain." It handles 100% of the vector storage, search, and metadata management in a single lightweight container.
-*   **Efficiency**: Replaces the redundant 3-container Milvus setup with a highly optimized Rust-based engine.
+### 4. Observability & Monitoring
+*   **Prometheus Metrics**: Exposes `/metrics` with counters for requests, latency, active connections, and ingestion status.
+*   **Structured Logging**: Uses `structlog` for JSON-formatted logs, making it easy to parse in ELK/Loki stacks.
+*   **Health Checks**: `/health` checks connectivity for both Qdrant and the LLM service.
+
+### 5. Vector Infrastructure
+*   **Qdrant**: A high-performance vector database running in a Docker container. It handles vector storage, similarity search, and payload filtering.
 
 ---
-> [!IMPORTANT]
-> **Production Ready**: Qdrant is configured with local persistence and healthy memory limits. It is ready for the next phase of n8n integration.
+> [!NOTE]
+> **Production Ready**: The backend is built to be stateless (except for memory job tracking) and is ready for horizontal scaling behind a load balancer.

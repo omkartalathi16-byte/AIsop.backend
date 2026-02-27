@@ -3,14 +3,15 @@ from qdrant_client.http import models
 import logging
 import time
 from typing import List, Dict, Any, Optional
+from app.engine.config import settings
 
 class QdrantService:
-    def __init__(self, host="127.0.0.1", port=6333, collection_name="sop_collection", dim=384):
-        self.host = host
-        self.port = port
-        self.collection_name = collection_name
-        self.dim = dim
-        self.client = QdrantClient(host=self.host, port=self.port, timeout=2.0)
+    def __init__(self, host=None, port=None, collection_name=None, dim=None):
+        self.host = host or settings.QDRANT_HOST
+        self.port = port or settings.QDRANT_PORT
+        self.collection_name = collection_name or settings.QDRANT_COLLECTION
+        self.dim = dim or settings.QDRANT_VECTOR_DIM
+        self.client = QdrantClient(host=self.host, port=self.port, timeout=60.0)
         self._set_up_collection()
 
     def _set_up_collection(self):

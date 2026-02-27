@@ -11,6 +11,7 @@ from functools import lru_cache
 from dataclasses import dataclass
 import numpy as np
 from fastembed import TextEmbedding
+from app.engine.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +43,9 @@ class EmbeddingService:
     
     def __init__(
         self,
-        model_name: str = "default",
-        batch_size: int = 16,
-        max_seq_length: int = 256,
+        model_name: str = None,
+        batch_size: int = None,
+        max_seq_length: int = None,
         normalize_embeddings: bool = True,
         quantize_model: bool = True,  # Kept for signature compatibility
         use_cache: bool = True,
@@ -53,14 +54,15 @@ class EmbeddingService:
         device: Optional[str] = "cpu"
     ):
         self.device = "cpu" 
-        self.batch_size = min(batch_size, 16) # Cap for i5
-        self.max_seq_length = max_seq_length
+        self.batch_size = min(batch_size or settings.EMBEDDING_BATCH_SIZE, 16) # Cap for i5
+        self.max_seq_length = max_seq_length or settings.EMBEDDING_MAX_SEQ_LENGTH
         self.normalize = normalize_embeddings
         self.use_cache = use_cache
         self.show_progress = show_progress
         
         # Resolve model name
-        self.model_name = self.MODEL_OPTIONS.get(model_name, "BAAI/bge-small-en-v1.5")
+        resolved_name = model_name or settings.EMBEDDING_MODEL
+        self.model_name = self.MODEL_OPTIONS.get(resolved_name, "BAAI/bge-small-en-v1.5")
         self.stats = EmbeddingStats()
         self.model = self._load_optimized_model()
         
